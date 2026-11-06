@@ -1,0 +1,15 @@
+{
+  "name": "Type Relay",
+  "id": "type-relay-dev",
+  "api": "1.0.0",
+  "main": "code.js",
+  "ui": "ui.html",
+  "editorType": ["figma"],
+  "documentAccess": "dynamic-page",
+  "enablePrivatePluginApi": true,
+  "networkAccess": {
+    "allowedDomains": ["none"],
+    "devAllowedDomains": ["http://localhost:47831"],
+    "reasoning": "Talks only to the Type Relay helper running on this computer."
+  }
+}

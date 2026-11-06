@@ -1,0 +1,106 @@
+<!-- Template: `node type-relay.mjs setup` fills in the token and writes ui.html. -->
+<style>
+  body { margin: 0; padding: 12px; font: 12px/1.4 Inter, system-ui, sans-serif; color: var(--figma-color-text, #222); background: var(--figma-color-bg, #fff); }
+  .row { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--figma-color-icon-tertiary, #bbb); flex: none; }
+  .dot.on { background: var(--figma-color-icon-success, #14ae5c); }
+  .dot.err { background: var(--figma-color-icon-danger, #f24822); }
+  .sub { margin-top: 6px; color: var(--figma-color-text-secondary, #777); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+</style>
+<div class="row"><span id="dot" class="dot"></span><span id="state">Starting…</span></div>
+<div id="sub" class="sub">Keep this window open while your AI works.</div>
+<script>
+  const BASE = 'http://localhost:__RELAY_PORT__';
+  const HEADERS = { 'content-type': 'application/json', 'x-relay-token': '__RELAY_TOKEN__' };
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const $ = (id) => document.getElementById(id);
+
+  // Plugin frames aren't always a secure context, so crypto.randomUUID may not exist.
+  const clientId = Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, '0')).join('');
+
+  // Show failures here: the plugin window is the only thing you can see.
+  window.onerror = (message) => show('Plugin error', 'err', String(message));
+  window.onunhandledrejection = (event) => show('Plugin error', 'err', String(event.reason));
+
+  let info = null;
+  let started = false;
+  let resolveResult = null;
+  let waitingFor = null;
+
+  function show(state, kind, sub) {
+    $('state').textContent = state;
+    $('dot').className = 'dot' + (kind ? ' ' + kind : '');
+    if (sub !== undefined) $('sub').textContent = sub;
+  }
+
+  function post(route, body, signal) {
+    return fetch(BASE + route, { method: 'POST', headers: HEADERS, body: JSON.stringify(body), signal });
+  }
+
+  // A script that never finishes must not stop the plugin taking further commands.
+  function runCommand(command) {
+    const limit = (command.timeoutMs || 60000) + 2000;
+    const finished = new Promise((resolve) => {
+      resolveResult = resolve;
+      waitingFor = command.id;
+      parent.postMessage({ pluginMessage: { type: 'command', command } }, '*');
+    });
+    const gaveUp = sleep(limit).then(() => {
+      show('Script did not finish', 'err', 'It may still be running. Reopen this plugin to stop it.');
+      return { type: 'result', commandId: command.id, ok: false, error: `No result after ${limit} ms` };
+    });
+    return Promise.race([finished, gaveUp]);
+  }
+
+  async function loop() {
+    let backoff = 500;
+    for (;;) {
+      try {
+        const res = await post('/poll', { clientId, ...info });
+        if (res.status === 401) {
+          show('Token mismatch', 'err', 'Run: node type-relay.mjs setup, then reopen this plugin.');
+          await sleep(5000);
+          continue;
+        }
+        const reply = await res.json();
+        backoff = 500;
+        show('Connected', 'on', info.file.name);
+        if (reply.command) {
+          const label = { run: 'Running script…', fonts: 'Listing fonts…', export: 'Exporting…', fontScan: 'Reading fonts…', fontAudit: 'Reading fonts…', fontSwap: 'Swapping fonts…', fontCheck: 'Checking layout…' }[reply.command.op];
+          show(label || 'Working…', 'on');
+          const ping = setInterval(() => post('/ping', { clientId }).catch(() => {}), 10000);
+          const { type, ...result } = await runCommand(reply.command);
+          clearInterval(ping);
+          await post('/result', result);
+          if (result.ok) show('Connected', 'on');
+        }
+      } catch (err) {
+        show('Waiting for Claude', '', `Helper not running (${err.message}). Connects when your AI session starts.`);
+        await sleep(backoff);
+        backoff = Math.min(backoff * 2, 5000);
+      }
+    }
+  }
+
+  window.onmessage = (event) => {
+    const msg = event.data.pluginMessage;
+    if (!msg) return;
+    if (msg.type === 'fatal') {
+      show('Plugin error', 'err', msg.error);
+    } else if (msg.type === 'info') {
+      info = msg.info;
+      if (!started) {
+        started = true;
+        show('Connecting…', '');
+        loop();
+      }
+    } else if (msg.type === 'result' && resolveResult && msg.commandId === waitingFor) {
+      // The id check drops a late result from a command we already gave up on.
+      const resolve = resolveResult;
+      resolveResult = null;
+      resolve(msg);
+    }
+  };
+
+  parent.postMessage({ pluginMessage: { type: 'ready' } }, '*');
+</script>

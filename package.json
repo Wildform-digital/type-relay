@@ -1,0 +1,12 @@
+{
+  "name": "type-relay",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Lets your AI assistant work in Figma desktop with your local fonts, and change a font across a big file safely.",
+  "license": "MIT",
+  "type": "module",
+  "bin": { "type-relay": "type-relay.mjs" },
+  "engines": { "node": ">=18" },
+  "scripts": { "setup": "node type-relay.mjs setup", "test": "node test/smoke.mjs" },
+  "repository": { "type": "git", "url": "git+https://github.com/Wildform-digital/type-relay.git" }
+}
